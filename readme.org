@@ -695,7 +695,7 @@ Her er en række *nice-to-haves*:
   - Flere bolde.
   - I kan garanteret finde på flere, end jeg kan.
 
-I kan finde yderligere inspiration og vejledning her [[https://api.arcade.academy/en/latest/examples/index.html]] særligt under [[https://api.arcade.academy/en/latest/examples/index.html#sprites][Sprites]] og [[https://api.arcade.academy/en/latest/examples/index.html#view-management][View Management]]
+I kan finde yderligere inspiration og vejledning her [[https://api.arcade.academy/en/latest/examples/index.html]] særligt under [[https://api.arcade.academy/en/latest/examples/index.html#sprites][Sprites]] og [[https://api.arcade.academy/en/latest/examples/index.html#view-management][View Management]].
 
 * Afrapportering
 Som noget ekstra kan I ikke slippe med at skrive kode. I denne omgang skal I også skrive noget, som kunne minde om indhold i en programmeringsrapport/journal.
