@@ -1,0 +1,706 @@
+#+title: Arkanoid-klon
+* Introduktion
+Efterhånden har I set anvendelse af klasse og objekter flere gange efterhånden. Vi har selv opbygget simple klasse fra bunden og vi har anvendt allerede eksisterende klasser fra biblioteket ~arcade~.
+
+I denne omgang skal I arbejde med indbyggede klasser i arcade og klasser, jeg har skrevet for jer (som også nedarvet fra klasser i arcade), og det I skal arbejde med er, *at skabe en klon af spillet /Arkanoid/*.
+
+I kan se en gif af spillet her:
+
+[[./img/arkanoid.gif]]
+
+og I kan se en hel gennemspilning af spillet på youtube her: [[https://youtu.be/Th-Z6QQ5AOQ]]
+
+Brug også youtubeklippet til at blive inspireret til jeres egen version af spillet. Se mere om dette senere.
+
+* Skabelon som I skal arbejde videre ud fra
+I den følgende kodeblok ser I den skabelon, I skal arbejde videre ud fra.
+
+Koden er væsentlig længere end det jeg har præsenteret for jer indtil nu, så derfor kommer der også lidt forklaringer efter selve kodeblokken. Husk dog, at læse alle kommentarerne i koden. I skulle gerne være i stand til at udvidde programmet, når I har læst koden igennem og læst kommentarerne. Koden kan I finde i python-filen [[./Opgave_06_arkanoid.py][Opgave_06_arkanoid.py]].
+
+#+begin_src python :exports both :results none :eval never-export :comments link :tangle Opgave_06_arkanoid.py
+import arcade
+import math
+
+VINDUEBREDDE = 800
+VINDUEHOEJDE = 600
+
+BAGGRUNDSFARVE = arcade.color.DARK_GRAY
+
+BATBREDDE = 100
+BATHOEJDE = 10
+BATFARVE = arcade.color.WHITE
+
+BOLDRADIUS = 5
+BOLDFARVE = arcade.color.RED
+BOLDFART = 5
+
+# Simpel klasse for en bold. Nedarver fra SpriteCircle,
+# som har de samme egenskaber som en alm Sprite, men som ikke
+# kraever en billedfil.
+class Bold(arcade.SpriteCircle):
+    def __init__(self, radius, farve, fart):
+        super().__init__(radius, farve)
+        self.fart = fart
+        self.fri = False
+
+    def nulstil(self, bat):
+        self.fri = False
+        self.center_x = bat.center_x
+        self.bottom = bat.top
+        self.stop()
+
+
+# Simpel klasse for battet. Nedarver fra SpriteSolidColor,
+# som har de samme egenskaber som en alm Sprite. Her er det
+# bare et rektangel i stedet for et billede, der vises.
+class Bat(arcade.SpriteSolidColor):
+    def __init__(self, bredde, hoejde, farve):
+        super().__init__(bredde, hoejde, farve)
+
+    def nulstil(self):
+        self.center_x = VINDUEBREDDE / 2
+        self.bottom = 0
+
+
+# Denne klasse skal repraesentere de klodser, som man skal ramme med bolden.
+# Man kan med fordel opbygge nye klasser for mere anvancerede klodser, ved at lade
+# dem nedarve fra denne.
+class SimpelKlods(arcade.SpriteSolidColor):
+    def __init__(self, bredde, hoejde, farve, hits_tilbage=1):
+        super().__init__(bredde, hoejde, farve)
+        self.hits_tilbage = hits_tilbage
+
+
+# Denne klasse skal bruges til at tegne et gennemsigtigt "overlay" over hver bane,
+# inden banen starter rigtigt."
+class BaneIntroduktionView(arcade.View):
+    def __init__(self, tilhoerende_bane_view):
+        super().__init__()
+        # "link" tilbage til den rigtige bane.
+        self.tilhoerende_bane_view = tilhoerende_bane_view
+
+    def on_draw(self):
+        self.clear()
+        # Tegner den bagvedliggende bane op
+        self.tilhoerende_bane_view.on_draw()
+
+        # Tegner en gennemsigtig firkant over hele vinduet.
+        arcade.draw_lrtb_rectangle_filled(
+            left=0,
+            right=self.window.width,
+            top=self.window.height,
+            bottom=0,
+            color=arcade.color.WHITE + (100,),
+            # + (100,) soerger for at den farve er transparent
+        )
+        # Generel banetekst med banenummer etc
+        banetekst = arcade.Text(
+            text=f"Bane {self.tilhoerende_bane_view.banenummer if self.tilhoerende_bane_view.banenummer else ''}",
+            start_x=self.window.width / 2,
+            start_y=self.window.height * 2 / 3,
+            color=arcade.color.BLACK,
+            font_size=30,
+            anchor_x="center",
+        )
+        banetekst.draw()
+        # Instruktionstekst - tryk på en af tasterne på musen
+        instruktionstekst = arcade.Text(
+            text="Tryk på en af musen knapper for at begynde.",
+            start_x=self.window.width / 2,
+            start_y=self.window.height * 1 / 3,
+            color=arcade.color.BLACK,
+            font_size=16,
+            anchor_x="center",
+        )
+        instruktionstekst.draw()
+
+    def on_mouse_press(self, _x, _y, _tast, _modifikationstast):
+        # Viser den rigtige bane.
+        self.window.show_view(self.tilhoerende_bane_view)
+
+
+# En klasse for en tom bane uden klodser i.
+# Den skal bruges til at samle al logik, som skal vaere faelles for
+# alle baner i spillet.
+class TomBaneView(arcade.View):
+    def __init__(self, liv_tilbage, banenummer=None):
+        super().__init__()
+        self.banenummer = banenummer
+        self.liv_tilbage = liv_tilbage
+        self.bat_liste = None
+        self.bold_liste = None
+        self.klodser_liste = None
+        self.bane_introduktion_view = None
+
+    def setup(self):
+        arcade.set_background_color(BAGGRUNDSFARVE)
+        self.bat_liste = arcade.SpriteList()
+        self.bat = Bat(BATBREDDE, BATHOEJDE, BATFARVE)
+        self.bat.nulstil()
+        self.bat_liste.append(self.bat)
+
+        self.bold_liste = arcade.SpriteList()
+        self.bold = Bold(BOLDRADIUS, BOLDFARVE, BOLDFART)
+        self.bold.nulstil(self.bat)
+        self.bold_liste.append(self.bold)
+
+        self.klodser_liste = arcade.SpriteList()
+        self.klodser_setup()
+
+        self.bane_introduktion_view = BaneIntroduktionView(self)
+        self.window.show_view(self.bane_introduktion_view)
+
+    def klodser_setup(self):
+        """Opbyg jeres bane ved at aendre på/overskrive koden i denne funktion."""
+        # Erstat pass med jeres egen kode. Goer det kun for kode, som skal vaere
+        # faelles for ALLE baner.
+        pass
+
+    def nulstil(self):
+        # Nulstiller battet og bolden til midt nederst paa skaermen.
+        self.bat.nulstil()
+        self.bold.nulstil(self.bat)
+
+    def on_update(self, delta_tid):
+        # Opdaterer bolden i boldlisten
+        self.bold_liste.update()
+
+        # Kollision mellem vinduets sider og bolden
+        # Herunder skal I indsaette jeres kode for at lade bolden blive inden for
+        # vinduet.
+
+        # Kollision mellem bold og klodser
+        # Opbygger en liste med alle de klodser, bolden rammer
+        ramte_klodser_liste = arcade.check_for_collision_with_list(
+            self.bold, self.klodser_liste
+        )
+
+        # Her skal logikken vaere for kollision mellem bold og en enkelt klods
+        # Erstat pass med jeres egen kode for logikken.
+        for klods in ramte_klodser_liste:
+            pass
+
+        # Kollision mellem bold og bat
+        if arcade.check_for_collision(self.bold, self.bat):
+            # Herunder skal I indsaette jeres logik for kollision mellem bold og bat.
+            # Fjern pass og erstat det med jeres egen kode.
+            pass
+
+        # Mist liv og tjek for game over
+        if self.bold.top < 0:
+            self.liv_tilbage -= 1
+            if self.liv_tilbage < 1:
+                # Erstat med kode, som viser en game overskaerm
+                print("Game over")
+            self.nulstil()
+
+        # Til naeste bane
+        if self.liv_tilbage > 0 and not self.klodser_liste:
+            self.til_naeste_bane_view()
+
+    def til_naeste_bane_view(self):
+        """Denne metode skal overskrives i en underklasse. Opret ny bane-objekt og soerg for at koere setup af denne ogsaa."""
+        pass
+
+    def on_draw(self):
+        self.clear()
+        self.bat_liste.draw()
+        self.bold_liste.draw()
+        self.klodser_liste.draw()
+        # Hvis der skal skrives, hvor mange liv der er tilbage, eller hvad
+        # en score er, saa skal koden til det staa herunder i denne metode.
+
+    def on_mouse_motion(self, x, y, hastighed_x, hastighed_y):
+        # Battet flytter sig efter musen
+        # Hvis man vil soerge for at hele battet ikke kan komme uden for vinduet,
+        # er det typisk i denne metode, at koden skal soerge for det.
+        self.bat.center_x = x
+        if not self.bold.fri:
+            self.bold.center_x = self.bat.center_x
+
+    def on_mouse_press(self, _x, _y, _tast, _modifikationstast):
+        # Bolden sendes afsted fra battet ved at trykke paa en vilkaarlig tast
+        # paa musen.
+        # Lige nu sendes bolden afsted med 45 grader mod hoejre fra battet
+        # Aendr koden, saa afsending af bolden foregaar, som I oensker det.
+        if not self.bold.fri:
+            self.bold.fri = True
+            self.bold.change_y = math.sin(math.pi / 4) * BOLDFART
+            self.bold.change_x = math.cos(math.pi / 4) * BOLDFART
+
+    def on_key_press(self, tast, modifikationstast):
+        # I denne metode skal I skrive jeres kode, som skal holde styr paa
+        # tastetryk. F.eks. hvis man vil lukke spillet ved at trykke paa Q
+        pass
+
+
+# Her oprettes foerste bane.
+# Den nedarver fra TomBaneView, saa det er kun de to viste metoder,
+# som skal overskrives for at passe til netop bane 1
+class Bane1View(TomBaneView):
+    def klodser_setup(self):
+        # Opbyg jeres egen bane
+        klods = SimpelKlods(100, 50, arcade.color.FLUORESCENT_YELLOW, hits_tilbage=1)
+        klods.center_x = self.window.width / 2
+        klods.center_y = self.window.height / 2
+        self.klodser_liste.append(klods)
+
+    def til_naeste_bane_view(self):
+        bane_2_view = Bane2View(self.liv_tilbage, banenummer=2)
+        bane_2_view.setup()
+
+
+# Klasse for bane nummer 2
+class Bane2View(TomBaneView):
+    def klodser_setup(self):
+        # Opbyg jeres egen bane
+        pass
+
+    def til_naeste_bane_view(self):
+        # Opret baneobjekt og husk at koere setup for denne efterfølgende.
+        pass
+
+
+# Herunder skal I self oprette klasser for alle de andre baner, som I vil have
+# med i jeres spil.
+# Se paa eksemplet med Bane1View og hvordan den linker til bane 2
+
+
+# Velkomstklassen, som viser en velkomstskaerm
+class VelkomstView(arcade.View):
+    def __init__(self):
+        super().__init__()
+
+    def on_show_view(self):
+        arcade.set_background_color(arcade.color.HONEYDEW)
+
+    def on_draw(self):
+        self.clear()
+        tekst = arcade.Text(
+            text="Velkommen til Arkanoid",
+            start_x=self.window.width / 2,
+            start_y=self.window.height * 2 / 3,
+            color=arcade.color.BLACK,
+            font_size=30,
+            anchor_x="center",
+        )
+        tekst.draw()
+        # Hvis der skal vaere instruktioner til spilleren, saa
+        # kan koden til dem skrives herunder
+
+    def on_mouse_press(self, _x, _y, _tast, _modifikationstast):
+        # Foerste bane startes, naar man trykker paa en tast paa musen.
+        bane_1_view = Bane1View(liv_tilbage=3, banenummer=1)
+        bane_1_view.setup()
+
+
+# Denne klasse skal bruges til at opbygge en eventuelt pauseskaerm
+# Se paa opbygningen af BaneIntroduktionView-klassen for inspiration
+class PauseView(arcade.View):
+    pass
+
+
+# Denne klasse skal bruges til at opbygge en eventuelt game over-klasse, som kan
+# vises, hvis man mister alle liv, inden man har gennemfoert alle baner.
+# Se paa opbygningen af BaneIntroduktionView-klassen for inspiration
+class GameOverView(arcade.View):
+    pass
+
+
+# Denne klasse skal bruges til at opbygge en eventuelt klasse til at vise, at
+# man har gennemfoert spillet
+# Se paa opbygningen af BaneIntroduktionView-klassen for inspiration
+class GennemfoertView(arcade.View):
+    pass
+
+
+def main():
+    break_out_vindue = arcade.Window(VINDUEBREDDE, VINDUEHOEJDE, "Arkanoid!")
+
+    velkomst_view = VelkomstView()
+    break_out_vindue.show_view(velkomst_view)
+
+    arcade.run()
+
+
+main()
+#+end_src
+
+** Skabelonens bestanddele
+I det følgende beskrives kort de forskellige klasser i skabelonen.
+
+Der anvendes følgende klasser i skabelonen:
+- ~Bold~
+- ~Bat~
+- ~SimpelKlods~
+- ~BaneIntroduktionView~
+- ~TomeBaneView~
+- ~Bane1View~
+- ~Bane2View~
+- ~VelkomstView~
+- ~PauseView~
+- ~GameOverView~
+- ~GennemfoertView~
+
+Derudover er der ~main~-funktionen tilsidst.
+
+*** class Bold
+
+[[./img/2023-01-24_15-15-50_screenshot.png]]
+
+Her er der blot tale om en simpelt klasse, som skal beskrive den bold, som battet skal slå til, og som skal ramme klodserne i spillet. Det meste af logikken er bare arvet fra ~SpriteCircle~-klassen fra ~arcade~, som igen nedarver fra ~Sprite~-klassen. Af nye instansvariable kan I se ~self.fart~ og ~self.fri~. Førstnævnte angiver boldens fart, mens sidstnævnte anvendes til at holde styr på om bolden er i spil (så er ~self.fri~ ~True~) eller om den skal sidde fast på battet.
+
+Der er en ny metode, som hedder ~nulstil~. Den sætter bolden tilbage på midten af battet.
+
+#+begin_src python :exports both :results none :eval never-export
+class Bold(arcade.SpriteCircle):
+    def __init__(self, radius, farve, fart):
+        super().__init__(radius, farve)
+        self.fart = fart
+        self.fri = False
+
+    def nulstil(self, bat):
+        self.fri = False
+        self.center_x = bat.center_x
+        self.bottom = bat.top
+        self.stop()
+#+end_src
+
+*** class Bat
+
+[[./img/2023-01-24_15-15-04_screenshot.png]]
+
+Denne klasse beskriver battet i spillet. Her nedarves der fra ~SpriteSolidColor~, som er et rektangel med samme egenskaber som ~Sprite~ fra ~arcade~. For dette klasse er der en ny metode, som hedder ~nulstil~. Den sætter battet tilbage midtfor i bunden af vinduet.
+
+#+begin_src python :exports both :results none :eval never-export
+class Bat(arcade.SpriteSolidColor):
+    def __init__(self, bredde, hoejde, farve):
+        super().__init__(bredde, hoejde, farve)
+
+    def nulstil(self):
+        self.center_x = VINDUEBREDDE / 2
+        self.bottom = 0
+#+end_src
+
+
+
+*** class SimpelKlods
+Denne klasse repræsenterer de klodser, som bolden skal ramme. Der er indført en ny instansvariable ~hits_tilbage~. Meningen med den er, at man skal kunne ramme klodsen én eller flere gange, før end den forsvinder. Koden til at fjerne klodsen, hvis den bliver ramt af bolden er dog ikke skrevet for jer. Den skal I selv finde ud af at skrive. Denne kode skal dog ikke skrives her i denne klasse, men i klassen ~TomBaneView~. Mere om det senere.
+
+#+begin_src python :exports both :results none :eval never-export
+class SimpelKlods(arcade.SpriteSolidColor):
+    def __init__(self, bredde, hoejde, farve, hits_tilbage=1):
+        super().__init__(bredde, hoejde, farve)
+        self.hits_tilbage = hits_tilbage
+#+end_src
+
+*** class BaneIntroduktionView
+
+[[./img/2023-01-24_15-12-54_screenshot.png]]
+
+Denne klasse sørger for at lægge en transparent farve hen over den næste bane, der skal spilles, hvor der står, hvilken bane man er nået til. Man fortsætter til næste bane ved at klikke med en vilkårlig tast på musen. I behøver ikke at oprette objekter af denne klasse selv i jeres kode. Klassen bliver oprettet, når man opretter en faktisk bane. I kan ændre på farverne og teksten etc, hvis I har lyst, men det er ikke påkrævet.
+
+#+begin_src python :exports both :results output :eval never-export
+class BaneIntroduktionView(arcade.View):
+    def __init__(self, tilhoerende_bane_view):
+        super().__init__()
+        # "link" tilbage til den rigtige bane.
+        self.tilhoerende_bane_view = tilhoerende_bane_view
+
+    def on_draw(self):
+        self.clear()
+        # Tegner den bagvedliggende bane op
+        self.tilhoerende_bane_view.on_draw()
+
+        # Tegner en gennemsigtig firkant over hele vinduet.
+        arcade.draw_lrtb_rectangle_filled(
+            left=0,
+            right=self.window.width,
+            top=self.window.height,
+            bottom=0,
+            color=arcade.color.WHITE + (100,), 
+            # + (100,) soerger for at den farve er transparent
+        )
+        # Generel banetekst med banenummer etc
+        banetekst = arcade.Text(
+            text=f"Bane {self.tilhoerende_bane_view.banenummer if self.tilhoerende_bane_view.banenummer else ''}",
+            start_x=self.window.width / 2,
+            start_y=self.window.height * 2 / 3,
+            color=arcade.color.BLACK,
+            font_size=30,
+            anchor_x="center",
+        )
+        banetekst.draw()
+        # Instruktionstekst - tryk på en af tasterne på musen
+        instruktionstekst = arcade.Text(
+            text="Tryk på en af musen knapper for at begynde.",
+            start_x=self.window.width / 2,
+            start_y=self.window.height * 1 / 3,
+            color=arcade.color.BLACK,
+            font_size=16,
+            anchor_x="center",
+        )
+        instruktionstekst.draw()
+
+    def on_mouse_press(self, _x, _y, _tast, _modifikationstast):
+        # Viser den rigtige bane.
+        self.window.show_view(self.tilhoerende_bane_view)
+#+end_src
+
+*** class TomBaneView
+Det er denne klasse, som indeholder alt det sjove, og som derfor også er den mest komplekse. Pointen med klassen er, at den skal stå for al logikken, som går igen for alle baner. Klassen selv har to parametre, som skal sættes, når man opretter et nyt objekt af denne klasse, eller af klasser som nedarver fra den. Disse er ~til_tilbage~ og ~banenummer~. Klassen har metoderne
+
+- ~setup~ :: Denne metode står for den generelle opsætning. Læg særligt mærke til at der anvendes ~SpriteList~ til ~bat_list~, ~bold_liste~ og ~klodser_liste~. Ved hjælp af disse ~SpriteList~'er kan koden optimeres når man f.eks. skal tjekke for sammenstød mellem bolden og klodserne.
+
+- ~klodser_setup~ :: Denne metode skal overskrives, når I opretter nye baner. Det er meningen at alle klodsers placering i banen skal stå i denne metode. Se mere under klassen ~Bane1View~.
+
+- ~nulstil~ :: Nulstiller battet og bolden.
+  
+- ~on_update~ :: *Denne metode er vigtig!* Her mangler der at blive skrevet kode, som sørger for at bolden bliver inden for vinduet, at bolden "bouncer" på den rigtige måde, når den rammer en klods, og når den rammer battet. Metoden her skal også stå for at fjerne en klods, når den er blevet ramt nok gange. Ligeledes metoden også sørge for at fjerne et liv, hvis bolden kommer uden for vinduet i bunden og endeligt skal den også sørge for at kalde metoden ~til_naeste_bane_view~, når/hvis man har fjernet alle klodser på banen og stadig har liv tilbage. I skal selv sørge for at skrive jeres egen kode her, som kan finde ud af alt dette (og mere til måske).
+  
+- ~til_naeste_bane_view~ :: Denne metode skal ikke ændres direkte i denne klasse, men i de klasser, som nedarver fra denne.
+- ~on_draw~ :: Denne metode sørger for at tegne alle bat, bolde, og klodser, som det ser ud nu. Hvis man gerne vil skrive f.eks., hvor mange liv man har tilbage eller hvilken score man har, så skal koden til dette skrives her.
+- ~on_mouse_motion~ :: Centrum af battet følger bare musens x-koordinat. Hvis bolden ikke er fri, så følger bolden med siddende oven på battet.
+- ~on_mouse_press~ :: Denne metode anvendes til at sende bolden afsted fra battet. Som det ser ud nu, sendes bolden afsted med en vinkel på 45 grader ift x-aksen ud fra battets midtpunkt. I kan ændre på koden, hvis I vil have bolden til at starte på en anden måde.
+- ~on_key_press~ :: Denne metode skal bruges, hvis man vil kunne trykke på tasterne på keyboardet. Det kunne f.eks. være muligheden for at lukke spillet med "Q", sætte på pause med "P" eller noget helt andet. I hvert fald skal koden til dette stå her.
+
+#+begin_src python :exports both :results none :eval never-export
+class TomBaneView(arcade.View):
+    def __init__(self, liv_tilbage, banenummer=None):
+        super().__init__()
+        self.banenummer = banenummer
+        self.liv_tilbage = liv_tilbage
+        self.bat_liste = None
+        self.bold_liste = None
+        self.klodser_liste = None
+        self.bane_introduktion_view = None
+
+    def setup(self):
+        arcade.set_background_color(BAGGRUNDSFARVE)
+        self.bat_liste = arcade.SpriteList()
+        self.bat = Bat(BATBREDDE, BATHOEJDE, BATFARVE)
+        self.bat.nulstil()
+        self.bat_liste.append(self.bat)
+
+        self.bold_liste = arcade.SpriteList()
+        self.bold = Bold(BOLDRADIUS, BOLDFARVE, BOLDFART)
+        self.bold.nulstil(self.bat)
+        self.bold_liste.append(self.bold)
+
+        self.klodser_liste = arcade.SpriteList()
+        self.klodser_setup()
+
+        self.bane_introduktion_view = BaneIntroduktionView(self)
+        self.window.show_view(self.bane_introduktion_view)
+
+    def klodser_setup(self):
+        """Opbyg jeres bane ved at aendre på/overskrive koden i denne funktion."""
+        # Erstat pass med jeres egen kode. Goer det kun for kode, som skal vaere
+        # faelles for ALLE baner.
+        pass
+
+    def nulstil(self):
+        # Nulstiller battet og bolden til midt nederst paa skaermen.
+        self.bat.nulstil()
+        self.bold.nulstil(self.bat)
+
+    def on_update(self, delta_tid):
+        # Opdaterer bolden i boldlisten
+        self.bold_liste.update()
+
+        # Kollision mellem vinduets sider og bolden
+        # Herunder skal I indsaette jeres kode for at lade bolden blive inden for
+        # vinduet.
+
+        # Kollision mellem bold og klodser
+        # Opbygger en liste med alle de klodser, bolden rammer
+        ramte_klodser_liste = arcade.check_for_collision_with_list(
+            self.bold, self.klodser_liste
+        )
+
+        # Her skal logikken vaere for kollision mellem bold og en enkelt klods
+        # Erstat pass med jeres egen kode for logikken.
+        for klods in ramte_klodser_liste:
+            pass
+
+        # Kollision mellem bold og bat
+        if arcade.check_for_collision(self.bold, self.bat):
+            # Herunder skal I indsaette jeres logik for kollision mellem bold og bat.
+            # Fjern pass og erstat det med jeres egen kode.
+            pass
+
+        # Mist liv og tjek for game over
+        if self.bold.top < 0:
+            self.liv_tilbage -= 1
+            if self.liv_tilbage < 1:
+                # Erstat med kode, som viser en game overskaerm
+                print("Game over")
+            self.nulstil()
+
+        # Til naeste bane
+        if self.liv_tilbage > 0 and not self.klodser_liste:
+            self.til_naeste_bane_view()
+
+    def til_naeste_bane_view(self):
+        """Denne metode skal overskrives i en underklasse. Opret ny bane-objekt og soerg for at koere setup af denne ogsaa."""
+        pass
+
+    def on_draw(self):
+        self.clear()
+        self.bat_liste.draw()
+        self.bold_liste.draw()
+        self.klodser_liste.draw()
+        # Hvis der skal skrives, hvor mange liv der er tilbage, eller hvad
+        # en score er, saa skal koden til det staa herunder i denne metode.
+
+    def on_mouse_motion(self, x, y, hastighed_x, hastighed_y):
+        # Battet flytter sig efter musen
+        # Hvis man vil soerge for at hele battet ikke kan komme uden for vinduet,
+        # er det typisk i denne metode, at koden skal soerge for det.
+        self.bat.center_x = x
+        if not self.bold.fri:
+            self.bold.center_x = self.bat.center_x
+
+    def on_mouse_press(self, _x, _y, _tast, _modifikationstast):
+        # Bolden sendes afsted fra battet ved at trykke paa en vilkaarlig tast
+        # paa musen.
+        # Lige nu sendes bolden afsted med 45 grader mod hoejre fra battet
+        # Aendr koden, saa afsending af bolden foregaar, som I oensker det.
+        if not self.bold.fri:
+            self.bold.fri = True
+            self.bold.change_y = math.sin(math.pi / 4) * BOLDFART
+            self.bold.change_x = math.cos(math.pi / 4) * BOLDFART
+
+    def on_key_press(self, tast, modifikationstast):
+        # I denne metode skal I skrive jeres kode, som skal holde styr paa
+        # tastetryk. F.eks. hvis man vil lukke spillet ved at trykke paa Q
+        pass
+#+end_src
+
+*** Bane1View og Bane2View
+Disse to klasser danner grundlaget for de to første baner i spillet. De nedarvet begge fra ~TomBaneView~. Den første bane indeholder kun en klods, mens den anden bane er helt tom. I skal selv sørge for at gøre banerne mere udfordrende. Til dette skal I modificere metoderne ~klodser_setup~ i begge klasser. I skal også modificere ~til_naeste_bane_view~ i klassen ~Bane2View~, når I har opbygget bane 3 selv. Se på koden i de to klasser, for at få en idé om, hvordan man loader en ny bane.
+
+#+begin_src python :exports both :results none :eval never-export
+class Bane1View(TomBaneView):
+    def klodser_setup(self):
+        # Opbyg jeres egen bane
+        klods = SimpelKlods(100, 50, arcade.color.FLUORESCENT_YELLOW, hits_tilbage=1)
+        klods.center_x = self.window.width / 2
+        klods.center_y = self.window.height / 2
+        self.klodser_liste.append(klods)
+
+    def til_naeste_bane_view(self):
+        bane_2_view = Bane2View(self.liv_tilbage, banenummer=2)
+        bane_2_view.setup()
+
+
+# Klasse for bane nummer 2
+class Bane2View(TomBaneView):
+    def klodser_setup(self):
+        # Opbyg jeres egen bane
+        pass
+
+    def til_naeste_bane_view(self):
+        # Opret baneobjekt og husk at koere setup for denne efterfølgende.
+        pass
+#+end_src
+
+*** VelkomstView
+
+#+attr_html: :width 600px
+[[./img/2023-01-24_15-10-55_screenshot.png]]
+
+Denne klasse anvendes til at vise en velkomstskærm til spilleren. Der sker ikke meget andet end at baggrundsfarven sættes til ~HONEYDEW~ og der skrives en teksten "Velkommen til Arkonoid". For at kunne starte selve spillet skal man trykke på én af musens knapper. Derfor er ~on_mouse_press~ den vigtige metode i denne klasse.
+
+#+begin_src python :exports both :results none :eval never-export
+class VelkomstView(arcade.View):
+    def __init__(self):
+        super().__init__()
+
+    def on_show_view(self):
+        arcade.set_background_color(arcade.color.HONEYDEW)
+
+    def on_draw(self):
+        self.clear()
+        tekst = arcade.Text(
+            text="Velkommen til Arkanoid",
+            start_x=self.window.width / 2,
+            start_y=self.window.height * 2 / 3,
+            color=arcade.color.BLACK,
+            font_size=30,
+            anchor_x="center",
+        )
+        tekst.draw()
+        # Hvis der skal vaere instruktioner til spilleren, saa
+        # kan koden til dem skrives herunder
+
+    def on_mouse_press(self, _x, _y, _tast, _modifikationstast):
+        # Foerste bane startes, naar man trykker paa en tast paa musen.
+        bane_1_view = Bane1View(liv_tilbage=3, banenummer=1)
+        bane_1_view.setup()
+#+end_src
+
+*** PauseView, GameOverView og GennemfoertView
+Disse klasser har ikke noget indhold endnu. De ligger bare klar, hvis I vil have det med I jeres spil. I skal se på ~VelkomstView~ og ~BaneIntroduktionView~ når I skal have inspiration til at oprette disse.
+
+#+begin_src python :exports both :results none :eval never-export
+# Denne klasse skal bruges til at opbygge en eventuelt pauseskaerm
+# Se paa opbygningen af BaneIntroduktionView-klassen for inspiration
+class PauseView(arcade.View):
+    pass
+
+
+# Denne klasse skal bruges til at opbygge en eventuelt game over-klasse, som kan
+# vises, hvis man mister alle liv, inden man har gennemfoert alle baner.
+# Se paa opbygningen af BaneIntroduktionView-klassen for inspiration
+class GameOverView(arcade.View):
+    pass
+
+
+# Denne klasse skal bruges til at opbygge en eventuelt klasse til at vise, at
+# man har gennemfoert spillet
+# Se paa opbygningen af BaneIntroduktionView-klassen for inspiration
+class GennemfoertView(arcade.View):
+    pass
+#+end_src
+
+*** main
+Denne funktion opretter først et arcade-vindue, som I har gjort så mange gange før. Efterfølgende opretter den et objekt af VelkomstView-klassen og sørger så for at vinduet viser dette ~view~. Til sidst køres selve programmet vha. ~arcade.run()~
+
+* Selve programmeringsopgaven
+*Med udgangspunkt i skabelonen skal I udvikle et fungerende spil som minder om Arkanoid.*
+
+Her er en række *must-haves*:
+- Bolden skal "bounce" på vinduets inderside undtagen i bunden.
+- Bolden skal "bounce" korrekt på klodserne.
+- Man skal kunne ramme bolden med battet. Om bolden bare reflekteres, eller om man skal være i stand til at ændre retningen af bolden, når den rammer battet, er op til jer at bestemme og implementere.
+- Der skal implementeres "mange" baner med forskellige udseender og/eller sværhedsgrader.
+- Der skal holdes styr på antallet af liv tilbage.
+- Når bolden ryger forbi battet og ud af vinduet for neden, skal battet og bolden nulstilles (og man skal miste et liv).
+- Når alle klodser er væk, skal man gå videre til næste bane.
+
+
+Her er en række *nice-to-haves*:
+- Mulighed for at pause spillet.
+- GameOverskærm.
+- Tillykkeskærm, til når/hvis man gennemfører spillet.
+- Mulighed for at starte spillet forfra uden at lukke det helt.
+- Indføre point, og vise det løbende på skærmen.
+- Lave klodser, som skal rammes flere gange. (Måske skal de også skifte farve)
+- Powerup (Her skal I selv skabe klasserne):
+  - Gør battet større eller mindre.
+  - Ekstra liv.
+  - Mulighed for at skyde.
+  - Magnetisk bat, så bolden holdes fast indtil man trykker på en musetast.
+  - Flere bolde.
+  - I kan garanteret finde på flere, end jeg kan.
+
+I kan finde yderligere inspiration og vejledning her [[https://api.arcade.academy/en/latest/examples/index.html]] særligt under [[https://api.arcade.academy/en/latest/examples/index.html#sprites][Sprites]] og [[https://api.arcade.academy/en/latest/examples/index.html#view-management][View Management]]
+
+* Afrapportering
+Som noget ekstra kan I ikke slippe med at skrive kode. I denne omgang skal I også skrive noget, som kunne minde om indhold i en programmeringsrapport/journal.
+
+I skal *tydeliggøre* og *beskrive/forklare* alle de dele af jeres kode, *som ikke er en del skabelonen, altså jeres egne bidrag.* Det kan f.eks. være jeres forskellige baners opbygning eller koden som sørger for, at bolden rammer klodserne, battet og vinduets sider på den rigtige måde. Det er oplagt at tilføje rutediagrammer og klassediagrammer, hvor det er passende.
+
+Rapportdelen kan I med fordel skrive i en *markdown*- eller *org*-fil (med endelserne .md eller .org) og så gemme og uploade dem til jeres git-repo. På den måde kan rapporterne læses direkte fra github. Vejledning til markdown- og org-syntaks kan I finde i jeres logbøger, hvor jeg har skrevet det oprindeligt. Alternativt kan I uploade en pdf-fil eller som sidste udvej en docx-fil med indholdet.
+
