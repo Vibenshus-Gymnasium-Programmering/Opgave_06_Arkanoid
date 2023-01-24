@@ -342,7 +342,7 @@ Der anvendes følgende klasser i skabelonen:
 - ~GameOverView~
 - ~GennemfoertView~
 
-Derudover er der ~main~-funktionen tilsidst.
+Derudover er der ~main~-funktionen til sidst.
 
 *** class Bold
 
